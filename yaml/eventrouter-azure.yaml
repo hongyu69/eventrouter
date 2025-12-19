@@ -11,12 +11,36 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cosmic-events
+---
+apiVersion: aadpodidentity.k8s.io/v1
+kind: AzureIdentity
+metadata:
+  name: cosmic-events-plat-id
+  namespace: cosmic-events
+spec:
+  clientID: 145823f2-39fd-4319-87f9-1f4ecc7b2daf
+  resourceID: /subscriptions/d78c2fce-db8c-4c43-88b4-53684bd63736/resourcegroups/cosmic-events-plat/providers/Microsoft.ManagedIdentity/userAssignedIdentities/cosmicpodidentity-id-cosmic-events-plat
+  type: 0
+---
+apiVersion: aadpodidentity.k8s.io/v1
+kind: AzureIdentityBinding
+metadata:
+  name: cosmic-events-plat-binding
+  namespace: cosmic-events
+spec:
+  azureIdentity: cosmic-events-plat-id
+  selector: cosmicpodidentity-sel-cosmic-events-plat
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: eventrouter 
-  namespace: kube-system
+  namespace: cosmic-events
 ---
 apiVersion: rbac.authorization.k8s.io/v1beta1
 kind: ClusterRole
@@ -38,25 +62,26 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: eventrouter
-  namespace: kube-system
+  namespace: cosmic-events
 ---
 apiVersion: v1
 data:
   config.json: |- 
     {
       "sink": "eventhub",
-      "eventHubConnectionString": "${EVENTHUB_CONNECTION_STRING}"
+      "eventHubNamespace": "cosmic-events-plat",
+      "eventHubName": "aks-events"
     }
 kind: ConfigMap
 metadata:
   name: eventrouter-cm
-  namespace: kube-system
+  namespace: cosmic-events
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: eventrouter
-  namespace: kube-system
+  namespace: cosmic-events
   labels:
     app: eventrouter
 spec:
@@ -69,15 +94,20 @@ spec:
       labels:
         app: eventrouter
         tier: control-plane-addons
+        aadpodidbinding: cosmic-events-plat-binding
     spec:
       containers:
         - name: kube-eventrouter
-          image: gcr.io/heptio-images/eventrouter:latest
+          image: cosmicplatacr.azurecr.io/cosmic-events/eventrouter:latest
           imagePullPolicy: Always
+          env:
+            - name: COSMIC_CLUSTER_ID
+              value: "plat-d00-pool161941060-nam-eastus2"
           volumeMounts:
           - name: config-volume
             mountPath: /etc/eventrouter
       serviceAccount: eventrouter
+      serviceAccountName: eventrouter
       volumes:
         - name: config-volume
           configMap:

@@ -3,6 +3,7 @@ package sinks
 import (
 	"context"
 	"encoding/json"
+	"os"
 
 	eventhub "github.com/Azure/azure-event-hubs-go/v2"
 	"github.com/eapache/channels"
@@ -38,9 +39,13 @@ type EventHubSink struct {
 // ```
 //
 // connString expects the Azure Event Hub connection string format:
-//		`Endpoint=sb://YOUR_ENDPOINT.servicebus.windows.net/;SharedAccessKeyName=YOUR_ACCESS_KEY_NAME;SharedAccessKey=YOUR_ACCESS_KEY;EntityPath=YOUR_EVENT_HUB_NAME`
-func NewEventHubSink(connString string, overflow bool, bufferSize int) (*EventHubSink, error) {
-	hub, err := eventhub.NewHubFromConnectionString(connString)
+//
+//	`Endpoint=sb://YOUR_ENDPOINT.servicebus.windows.net/;SharedAccessKeyName=YOUR_ACCESS_KEY_NAME;SharedAccessKey=YOUR_ACCESS_KEY;EntityPath=YOUR_EVENT_HUB_NAME`
+func NewEventHubSink(eventHubNamespace string, eventHubName string, overflow bool, bufferSize int) (*EventHubSink, error) {
+	os.Setenv("EVENTHUB_NAMESPACE", eventHubNamespace)
+	os.Setenv("EVENTHUB_NAME", eventHubName)
+
+	hub, err := eventhub.NewHubFromEnvironment()
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +123,11 @@ func (h *EventHubSink) drainEvents(events []EventData) {
 			evts = nil
 			messageSize = 0
 		}
-		evts = append(evts, eventhub.NewEvent(eJSONBytes))
+
+		event := eventhub.NewEvent(eJSONBytes)
+		event.Set("cosmic_cluster_id", os.Getenv("COSMIC_CLUSTER_ID"))
+
+		evts = append(evts, event)
 	}
 	h.sendBatch(evts)
 }

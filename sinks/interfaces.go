@@ -200,10 +200,16 @@ func ManufactureSink() (e EventSinkInterface) {
 		}
 		e = NewRocksetSink(rocksetAPIKey, rocksetCollectionName, rocksetWorkspaceName)
 	case "eventhub":
-		connString := viper.GetString("eventHubConnectionString")
-		if connString == "" {
-			panic("eventhub sink specified but eventHubConnectionString not specified")
+		eventhubNamespace := viper.GetString("eventHubNamespace")
+		if eventhubNamespace == "" {
+			panic("eventhub sink specified but eventHubNamespace not specified")
 		}
+
+		eventhubName := viper.GetString("eventHubName")
+		if eventhubName == "" {
+			panic("eventhub sink specified but eventHubName not specified")
+		}
+
 		// By default we buffer up to 1500 events, and drop messages if more than
 		// 1500 have come in without getting consumed
 		viper.SetDefault("eventHubSinkBufferSize", 1500)
@@ -211,7 +217,7 @@ func ManufactureSink() (e EventSinkInterface) {
 
 		bufferSize := viper.GetInt("eventHubSinkBufferSize")
 		overflow := viper.GetBool("eventHubSinkDiscardMessages")
-		eh, err := NewEventHubSink(connString, overflow, bufferSize)
+		eh, err := NewEventHubSink(eventhubNamespace, eventhubName, overflow, bufferSize)
 		if err != nil {
 			panic(err.Error())
 		}
