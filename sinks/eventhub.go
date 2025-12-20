@@ -3,20 +3,20 @@ package sinks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 
-	eventhub "github.com/Azure/azure-event-hubs-go/v2"
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azeventhubs/v2"
 	"github.com/eapache/channels"
 	"github.com/golang/glog"
 	v1 "k8s.io/api/core/v1"
 )
 
-const maxMessageSize = 1046528
-
 // EventHubSink sends events to an Azure Event Hub.
 type EventHubSink struct {
-	hub     *eventhub.Hub
-	eventCh channels.Channel
+	producerClient *azeventhubs.ProducerClient
+	eventCh        channels.Channel
 }
 
 // NewEventHubSink constructs a new EventHubSink given a event hub connection string
@@ -42,13 +42,18 @@ type EventHubSink struct {
 //
 //	`Endpoint=sb://YOUR_ENDPOINT.servicebus.windows.net/;SharedAccessKeyName=YOUR_ACCESS_KEY_NAME;SharedAccessKey=YOUR_ACCESS_KEY;EntityPath=YOUR_EVENT_HUB_NAME`
 func NewEventHubSink(eventHubNamespace string, eventHubName string, overflow bool, bufferSize int) (*EventHubSink, error) {
-	os.Setenv("EVENTHUB_NAMESPACE", eventHubNamespace)
-	os.Setenv("EVENTHUB_NAME", eventHubName)
+	defaultAzureCred, err := azidentity.NewDefaultAzureCredential(nil)
 
-	hub, err := eventhub.NewHubFromEnvironment()
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
+
+	producerClient, err := azeventhubs.NewProducerClient(eventHubNamespace, eventHubName, defaultAzureCred, nil)
+
+	if err != nil {
+		panic(err)
+	}
+
 	var eventCh channels.Channel
 	if overflow {
 		eventCh = channels.NewOverflowingChannel(channels.BufferCap(bufferSize))
@@ -56,7 +61,7 @@ func NewEventHubSink(eventHubNamespace string, eventHubName string, overflow boo
 		eventCh = channels.NewNativeChannel(channels.BufferCap(bufferSize))
 	}
 
-	return &EventHubSink{hub: hub, eventCh: eventCh}, nil
+	return &EventHubSink{producerClient: producerClient, eventCh: eventCh}, nil
 }
 
 // UpdateEvents implements the EventSinkInterface. It really just writes the
@@ -72,6 +77,7 @@ func (h *EventHubSink) UpdateEvents(eNew *v1.Event, eOld *v1.Event) {
 // between loop iterations, it puts all of them in one request instead of
 // making a single request per event.
 func (h *EventHubSink) Run(stopCh <-chan bool) {
+	defer h.producerClient.Close(context.TODO())
 loop:
 	for {
 		select {
@@ -108,32 +114,61 @@ loop:
 
 // drainEvents takes an array of event data and sends it to the receiving event hub.
 func (h *EventHubSink) drainEvents(events []EventData) {
-	var messageSize int
-	var evts []*eventhub.Event
-	for _, evt := range events {
-		eJSONBytes, err := json.Marshal(evt)
+	newBatchOptions := &azeventhubs.EventDataBatchOptions{}
+	batch, err := h.producerClient.NewEventDataBatch(context.TODO(), newBatchOptions)
+	if err != nil {
+		panic(err)
+	}
+
+	for i := 0; i < len(events); i++ {
+		eJSONBytes, err := json.Marshal(events[i])
 		if err != nil {
 			glog.Warningf("Failed to flatten json: %v", err)
 			return
 		}
 		glog.V(4).Infof("%s", string(eJSONBytes))
-		messageSize += len(eJSONBytes)
-		if messageSize > maxMessageSize {
-			h.sendBatch(evts)
-			evts = nil
-			messageSize = 0
+
+		err = batch.AddEventData(&azeventhubs.EventData{
+			Body: eJSONBytes,
+			Properties: map[string]any{
+				"cosmic_cluster_id": os.Getenv("COSMIC_CLUSTER_ID"),
+			},
+		}, nil)
+
+		if errors.Is(err, azeventhubs.ErrEventDataTooLarge) {
+			if batch.NumEvents() == 0 {
+				// This one event is too large for this batch, even on its own. No matter what we do it
+				// will not be sendable at its current size.
+				panic(err)
+			}
+
+			// This batch is full - we can send it and create a new one and continue
+			// packaging and sending events.
+			if err := h.producerClient.SendEventDataBatch(context.TODO(), batch, nil); err != nil {
+				panic(err)
+			}
+
+			// create the next batch we'll use for events, ensuring that we use the same options
+			// each time so all the messages go the same target.
+			tmpBatch, err := h.producerClient.NewEventDataBatch(context.TODO(), newBatchOptions)
+
+			if err != nil {
+				panic(err)
+			}
+
+			batch = tmpBatch
+
+			// rewind so we can retry adding this event to a batch
+			i--
+		} else if err != nil {
+			panic(err)
 		}
-
-		event := eventhub.NewEvent(eJSONBytes)
-		event.Set("cosmic_cluster_id", os.Getenv("COSMIC_CLUSTER_ID"))
-
-		evts = append(evts, event)
 	}
-	h.sendBatch(evts)
-}
 
-func (h *EventHubSink) sendBatch(evts []*eventhub.Event) {
-	if err := h.hub.SendBatch(context.Background(), eventhub.NewEventBatchIterator(evts...)); err != nil {
-		glog.Errorf("Failed to send batch of %d: %v", len(evts), err)
+	// if we have any events in the last batch, send it
+	if batch.NumEvents() > 0 {
+		if err := h.producerClient.SendEventDataBatch(context.TODO(), batch, nil); err != nil {
+			panic(err)
+		}
 	}
 }

@@ -69,7 +69,7 @@ data:
   config.json: |- 
     {
       "sink": "eventhub",
-      "eventHubNamespace": "cosmic-events-plat",
+      "eventHubNamespace": "cosmic-events-plat.servicebus.windows.net",
       "eventHubName": "aks-events"
     }
 kind: ConfigMap

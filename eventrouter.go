@@ -79,7 +79,7 @@ var (
 // system Events and pushing them to another channel for storage
 type EventRouter struct {
 	// kubeclient is the main kubernetes interface
-	kubeClient kubernetes.Interface
+	kubeClient *kubernetes.Clientset
 
 	// store of events populated by the shared informer
 	eLister corelisters.EventLister
@@ -93,7 +93,7 @@ type EventRouter struct {
 }
 
 // NewEventRouter will create a new event router using the input params
-func NewEventRouter(kubeClient kubernetes.Interface, eventsInformer coreinformers.EventInformer) *EventRouter {
+func NewEventRouter(kubeClient *kubernetes.Clientset, eventsInformer coreinformers.EventInformer) *EventRouter {
 	if viper.GetBool("enable-prometheus") {
 		prometheus.MustRegister(kubernetesWarningEventCounterVec)
 		prometheus.MustRegister(kubernetesNormalEventCounterVec)

@@ -58,7 +58,7 @@ func sigHandler() <-chan struct{} {
 }
 
 // loadConfig will parse input + config file and return a clientset
-func loadConfig() kubernetes.Interface {
+func loadConfig() *kubernetes.Clientset {
 	var config *rest.Config
 	var err error
 
