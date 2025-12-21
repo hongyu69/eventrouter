@@ -19,4 +19,4 @@ RUN apk update --no-cache && apk add ca-certificates
 ADD eventrouter /app/
 USER nobody:nobody
 
-CMD ["/bin/sh", "-c", "/app/eventrouter -v 4 -logtostderr"]
+CMD ["/bin/sh", "-c", "/app/eventrouter -v 3 -logtostderr"]

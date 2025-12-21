@@ -71,8 +71,7 @@ func loadConfig() *kubernetes.Clientset {
 	viper.AddConfigPath("/etc/eventrouter/")
 	viper.AddConfigPath(".")
 	viper.SetDefault("kubeconfig", "")
-	viper.SetDefault("sink", "glog")
-	viper.SetDefault("resync-interval", time.Minute*30)
+	viper.SetDefault("resync-interval", time.Minute*0)
 	viper.SetDefault("enable-prometheus", true)
 	if err = viper.ReadInConfig(); err != nil {
 		panic(err.Error())
