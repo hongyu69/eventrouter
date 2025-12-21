@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azeventhubs/v2"
 	"github.com/eapache/channels"
@@ -137,6 +138,7 @@ func (h *EventHubSink) drainEvents(events []EventData) {
 			Properties: map[string]any{
 				"cosmic_cluster_id": cosmicClusterId,
 			},
+			ContentType: to.Ptr("application/json"),
 		}, nil)
 
 		if errors.Is(err, azeventhubs.ErrEventDataTooLarge) {
