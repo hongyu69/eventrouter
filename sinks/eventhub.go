@@ -114,7 +114,11 @@ loop:
 
 // drainEvents takes an array of event data and sends it to the receiving event hub.
 func (h *EventHubSink) drainEvents(events []EventData) {
-	newBatchOptions := &azeventhubs.EventDataBatchOptions{}
+	cosmicClusterId := os.Getenv("COSMIC_CLUSTER_ID")
+
+	newBatchOptions := &azeventhubs.EventDataBatchOptions{
+		PartitionKey: &cosmicClusterId,
+	}
 	batch, err := h.producerClient.NewEventDataBatch(context.TODO(), newBatchOptions)
 	if err != nil {
 		panic(err)
@@ -131,7 +135,7 @@ func (h *EventHubSink) drainEvents(events []EventData) {
 		err = batch.AddEventData(&azeventhubs.EventData{
 			Body: eJSONBytes,
 			Properties: map[string]any{
-				"cosmic_cluster_id": os.Getenv("COSMIC_CLUSTER_ID"),
+				"cosmic_cluster_id": cosmicClusterId,
 			},
 		}, nil)
 
