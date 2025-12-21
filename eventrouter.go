@@ -159,15 +159,27 @@ func (er *EventRouter) updateEvent(objOld interface{}, objNew interface{}) {
 }
 
 // eventLastSeenAfterStart determines if an event should be published by
-// checking only its LastTimestamp against the router start time. Events with
-// a zero LastTimestamp are dropped with a warning.
+// checking its occurrence time against the router start time.
+// Preference order: LastTimestamp, EventTime, FirstTimestamp, CreationTimestamp.
+// If none are available, the event is dropped.
 func (er *EventRouter) eventLastSeenAfterStart(e *v1.Event) bool {
-	if e.LastTimestamp.IsZero() {
-		glog.Warningf("Event %s/%s has zero LastTimestamp; dropping", e.Namespace, e.Name)
-		return false
+	if !e.LastTimestamp.IsZero() {
+		t := e.LastTimestamp.Time
+		return !t.UTC().Before(er.startTime)
 	}
-	t := e.LastTimestamp.Time
-	return !t.UTC().Before(er.startTime)
+	if !e.EventTime.IsZero() {
+		t := e.EventTime.Time
+		return !t.UTC().Before(er.startTime)
+	}
+	if !e.FirstTimestamp.IsZero() {
+		t := e.FirstTimestamp.Time
+		return !t.UTC().Before(er.startTime)
+	}
+	if !e.CreationTimestamp.IsZero() {
+		t := e.CreationTimestamp.Time
+		return !t.UTC().Before(er.startTime)
+	}
+	return false
 }
 
 // prometheusEvent is called when an event is added or updated
