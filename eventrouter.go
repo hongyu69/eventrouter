@@ -18,6 +18,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/golang/glog"
 	"github.com/heptiolabs/eventrouter/sinks"
@@ -90,6 +91,9 @@ type EventRouter struct {
 	// event sink
 	// TODO: Determine if we want to support multiple sinks.
 	eSink sinks.EventSinkInterface
+
+	// startTime records when the router started, used to filter events
+	startTime time.Time
 }
 
 // NewEventRouter will create a new event router using the input params
@@ -104,6 +108,7 @@ func NewEventRouter(kubeClient *kubernetes.Clientset, eventsInformer coreinforme
 	er := &EventRouter{
 		kubeClient: kubeClient,
 		eSink:      sinks.ManufactureSink(),
+		startTime:  time.Now().UTC(),
 	}
 	eventsInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    er.addEvent,
@@ -133,16 +138,36 @@ func (er *EventRouter) Run(stopCh <-chan struct{}) {
 // addEvent is called when an event is created, or during the initial list
 func (er *EventRouter) addEvent(obj interface{}) {
 	e := obj.(*v1.Event)
-	prometheusEvent(e)
-	er.eSink.UpdateEvents(e, nil)
+	if er.eventLastSeenAfterStart(e) {
+		prometheusEvent(e)
+		er.eSink.UpdateEvents(e, nil)
+	} else {
+		glog.V(3).Infof("Skipping pre-start event %s/%s last seen at %s (router start %s)", e.Namespace, e.Name, e.LastTimestamp.Time, er.startTime)
+	}
 }
 
 // updateEvent is called any time there is an update to an existing event
 func (er *EventRouter) updateEvent(objOld interface{}, objNew interface{}) {
 	eOld := objOld.(*v1.Event)
 	eNew := objNew.(*v1.Event)
-	prometheusEvent(eNew)
-	er.eSink.UpdateEvents(eNew, eOld)
+	if er.eventLastSeenAfterStart(eNew) {
+		prometheusEvent(eNew)
+		er.eSink.UpdateEvents(eNew, eOld)
+	} else {
+		glog.V(3).Infof("Skipping update for pre-start event %s/%s last seen at %s (router start %s)", eNew.Namespace, eNew.Name, eNew.LastTimestamp.Time, er.startTime)
+	}
+}
+
+// eventLastSeenAfterStart determines if an event should be published by
+// checking only its LastTimestamp against the router start time. Events with
+// a zero LastTimestamp are dropped with a warning.
+func (er *EventRouter) eventLastSeenAfterStart(e *v1.Event) bool {
+	if e.LastTimestamp.IsZero() {
+		glog.Warningf("Event %s/%s has zero LastTimestamp; dropping", e.Namespace, e.Name)
+		return false
+	}
+	t := e.LastTimestamp.Time
+	return !t.UTC().Before(er.startTime)
 }
 
 // prometheusEvent is called when an event is added or updated
