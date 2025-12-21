@@ -41,16 +41,23 @@ type EventData struct {
 // setting the verb accordingly
 func NewEventData(eNew *v1.Event, eOld *v1.Event) EventData {
 	var eData EventData
+
+	eNewCopy := eNew.DeepCopy()
+	eNewCopy.ManagedFields = nil
+
 	if eOld == nil {
 		eData = EventData{
 			Verb:  "ADDED",
-			Event: eNew,
+			Event: eNewCopy,
 		}
 	} else {
+		eOldCopy := eOld.DeepCopy()
+		eOldCopy.ManagedFields = nil
+
 		eData = EventData{
 			Verb:     "UPDATED",
-			Event:    eNew,
-			OldEvent: eOld,
+			Event:    eNewCopy,
+			OldEvent: eOldCopy,
 		}
 	}
 
