@@ -102,7 +102,7 @@ spec:
           imagePullPolicy: Always
           env:
             - name: COSMIC_CLUSTER_ID
-              value: "plat-d00-pool161941060-nam-eastus2"
+              value: "plat-d00-02-nam-eastus2"
             - name: AZURE_CLIENT_ID
               value: 145823f2-39fd-4319-87f9-1f4ecc7b2daf
           volumeMounts:
