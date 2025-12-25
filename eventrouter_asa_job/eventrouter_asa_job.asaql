@@ -1,0 +1,49 @@
+WITH WarningEvents AS (
+    SELECT
+        GetMetadataPropertyValue([aks-events], '[User].[cosmic_cluster_id]') as clusterId,
+		*
+    FROM
+        [aks-events]
+    WHERE type = 'Warning'
+),
+WarningEvents_Latest AS (
+    SELECT
+        TopOne() OVER (ORDER BY EventEnqueuedUtcTime DESC) as latestWarningEvent
+    FROM
+        [WarningEvents]
+    GROUP BY
+		clusterId,
+        [metadata].[name],
+        HoppingWindow(Duration(hour, 1), Hop(minute, 10))
+),
+WarningEvents_Latest_Expanded AS (
+    SELECT
+        latestWarningEvent.*
+    FROM
+        WarningEvents_Latest
+),
+WarningEvents_Top10 AS (
+	SELECT
+		involvedObject.namespace,
+		involvedObject.apiVersion,
+		involvedObject.kind,
+		involvedObject.fieldPath,
+        reason,
+		COUNT(DISTINCT clusterId) AS impactedClustersCount,
+		UDA.ConcatClusterIDs(clusterId) AS impactedClusters,
+		CollectTop(10) OVER (ORDER BY count DESC, EventEnqueuedUtcTime DESC) AS top10WarningEvents
+	FROM
+		WarningEvents_Latest_Expanded
+	GROUP BY
+		involvedObject.namespace,
+		involvedObject.apiVersion,
+		involvedObject.kind,
+		involvedObject.fieldPath,
+        reason,
+		TumblingWindow(minute, 10)
+)
+
+SELECT
+    *
+INTO outputalias
+FROM WarningEvents_Top10
