@@ -8,7 +8,7 @@ WITH WarningEvents AS (
 ),
 WarningEvents_Latest AS (
     SELECT
-        TopOne() OVER (ORDER BY EventEnqueuedUtcTime DESC) as latestWarningEvent
+        TopOne() OVER (ORDER BY CAST(EventEnqueuedUtcTime AS datetime) DESC) as latestWarningEvent
     FROM
         [WarningEvents]
     GROUP BY
@@ -30,8 +30,8 @@ WarningEvents_Top10 AS (
 		involvedObject.fieldPath,
         reason,
 		COUNT(DISTINCT clusterId) AS impactedClustersCount,
-		UDA.ConcatClusterIDs(clusterId) AS impactedClusters,
-		CollectTop(10) OVER (ORDER BY count DESC, EventEnqueuedUtcTime DESC) AS top10WarningEvents
+		uda.ConcatClusterIDs(clusterId) AS impactedClusters,
+		CollectTop(10) OVER (ORDER BY count DESC, CAST(EventEnqueuedUtcTime AS datetime) DESC) AS top10WarningEvents
 	FROM
 		WarningEvents_Latest_Expanded
 	GROUP BY
@@ -45,5 +45,5 @@ WarningEvents_Top10 AS (
 
 SELECT
     *
-INTO outputalias
+INTO [cosmic-events-sb-plat-aks-event]
 FROM WarningEvents_Top10
