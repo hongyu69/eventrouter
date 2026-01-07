@@ -1,8 +1,4 @@
-# Design Doc: K8s Fleet Event Telemetry & Anomaly Detection System
-
-**Author:** [Your Name/Team]  
-**Date:** 2026-01-07  
-**Status:** Draft  
+# RFC: Kubernetes Event-Based Cosmic Fleet Observability System
 
 ## 1. Executive Summary
 This document outlines the architecture for a centralized telemetry system designed to ingest, analyze, and act upon Kubernetes events from a fleet of thousands of clusters. The system utilizes `eventrouter` for edge collection, a high-throughput streaming platform for ingestion, real-time stream processing for anomaly detection, and a service bus for decoupled downstream consumption.
