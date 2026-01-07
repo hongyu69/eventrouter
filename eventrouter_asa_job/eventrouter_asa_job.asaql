@@ -41,9 +41,24 @@ WarningEvents_Top10 AS (
 		involvedObject.fieldPath,
         reason,
 		TumblingWindow(minute, 10)
+),
+WarningEvents_PerCluster AS (
+	SELECT
+		clusterId,
+		Collect() AS warnings
+	FROM
+		WarningEvents_Latest_Expanded
+	GROUP BY
+		clusterId,
+		TumblingWindow(minute, 10)
 )
 
 SELECT
     *
 INTO [cosmic-events-sb-plat-aks-event]
 FROM WarningEvents_Top10
+
+SELECT
+    *
+INTO [cosmic-events-db-plat]
+FROM WarningEvents_PerCluster
