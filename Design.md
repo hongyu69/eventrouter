@@ -52,9 +52,14 @@ The data pipeline consists of four main stages: **Collection**, **Ingestion**, *
 *   **Logic**:
     *   **Filtering**: Ignore `Normal` events, focus on `Warning`.
     *   **Enrichment/Classification**: Tag events based on Namespace/Labels to distinguish **Platform** (e.g., `kube-system`, `gatekeeper-system`) vs. **Customer** (e.g., `tenant-*`, `user-*`) workloads.
-    *   **Windowing**: Tumbling or Hopping windows (e.g., 5-minute intervals).
-    *   **Pattern Matching**: Detect >10 `FailedMount` or `CrashLoopBackOff` events within a window for the same namespace/pod.
-*   **Output**: JSON payload describing the anomaly (ClusterID, Severity, Timestamp, Category [Platform|Customer], RawEventRefs).
+    *   **Windowing (Aggregation)**: 
+        *   Kubernetes treats ongoing issues as `UPDATES` to a single event (incrementing `count`). 
+        *   The Stream Job collapses these continuous updates into **Tumbling Windows** (e.g., 5 minutes). 
+        *   *Result*: Instead of 500 "New Event" triggers, we emit **one** summary event per window saying "Pod X crashed 50 times in the last 5 minutes".
+    *   **Fingerprinting**: 
+        *   Generates a deterministic **Alert ID** (Hash of `ClusterID` + `Namespace` + `Object` + `Reason`).
+        *   This ID remains constant as long as the same issue persists.
+*   **Output**: JSON payload describing the anomaly (ClusterID, Severity, Timestamp, Category, AlertID, WindowCount).
 
 ### 4.4 Distribution & Consumption
 *   **Technology**: Enterprise Service Bus (e.g., RabbitMQ, Azure Service Bus).
@@ -62,8 +67,12 @@ The data pipeline consists of four main stages: **Collection**, **Ingestion**, *
 *   **Routing Strategy**:
     *   **Topic**: `telemetry.anomalies`
     *   **Subscription Filters**: Consumers filter based on the `Category` field enriched during processing.
+*   **Deduplication Strategy**:
+    *   Consumers utilize the **Alert ID** (generated in 4.3) to manage state.
+    *   **First Occurrence**: Open new Ticket / Alert.
+    *   **Subsequent Occurrences (Same Alert ID)**: Update existing Ticket count / Reset "Auto-resolve" timer. **Do not page**.
 *   **Subscribers**:
-    *   **Platform SRE**: Subscribes to `Category == 'Platform'`. Triggers PagerDuty to internal teams for system component failures (e.g., CNI crash).
+    *   **Platform SRE**: Subscribes to `Category == 'Platform'`. Triggers PagerDuty using `Alert ID` as the deduplication key.
     *   **Customer Support**: Subscribes to `Category == 'Customer'`. Feeds into CRM/Ticketing systems to proactively notify customers of their application misconfigurations.
     *   **Data Lake Sink**: Archives ALL anomalies for comprehensive historical analysis.
     *   **Enrichment Service**: Decorates events with cluster metadata (Owner, Region) before forwarding to dashboards.
