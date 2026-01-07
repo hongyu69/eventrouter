@@ -22,7 +22,12 @@ The data pipeline consists of four main stages: **Collection**, **Ingestion**, *
 
 ### 3.1 Edge Collection (Source)
 *   **Component**: `eventrouter` (deployed as a Deployment/DaemonSet).
-*   **Responsibility**: Watch `v1.Event` resources. Filter noise (optional). Transform to JSON.
+*   **Responsibility**: Watch `v1.Event` resources. Transform to JSON.
+*   **Edge Filtering Strategy**:
+    *   **Objective**: Eliminate noise at the source to prevent "DDOS by Logging" and reduce costs.
+    *   **Mechanism**: A configurable filter engine running inside `eventrouter`.
+    *   **Default Policy**: **DROP** all events where `Type == 'Normal'`.
+    *   **Overrides**: Allow-list specific `Normal` events (e.g., `NodeReady`) that are required for reachability analysis.
 *   **Transport**: Producer API to push directly to Ingestion endpoint.
 *   **Auth**: Mutual TLS (mTLS) or SAS tokens per cluster.
 
@@ -51,6 +56,7 @@ The data pipeline consists of four main stages: **Collection**, **Ingestion**, *
     *   **Enrichment Service**: Decorates events with cluster metadata (Owner, Region) before forwarding to dashboards.
 
 ## 4. Scalability & Reliability
+*   **Edge Reduction**: Filtering `Normal` events at the edge is the primary scalability lever, expected to reduce volume by ~90%.
 *   **Throttling**: The Edge agent (`eventrouter`) must implement rate limiting to prevent DDOSing the ingestion layer during cluster-wide failures.
 *   **Backpressure**: The Ingestion layer acts as a buffer. Stream processors must scale horizontally based on lag.
 *   **Idempotency**: Downstream consumers must handle duplicate deliveries (At-least-once delivery guarantee).
