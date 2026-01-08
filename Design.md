@@ -1,88 +1,100 @@
-# RFC: Kubernetes Event-Based Cosmic Fleet Observability System
+# RFC: Cosmic Event-Based Fleet Observability System
 
 ## 1. Executive Summary
-This document outlines the architecture for a centralized telemetry system designed to ingest, analyze, and act upon Kubernetes events from a fleet of thousands of clusters. The system utilizes `eventrouter` for edge collection, a high-throughput streaming platform for ingestion, real-time stream processing for anomaly detection, and a service bus for decoupled downstream consumption.
+This document outlines the architecture for a centralized, multi-signal telemetry system designed to maintain a holistic view of a massive fleet of resources (including Kubernetes clusters).
 
-Critically, the system is designed to support a **multi-tenant** environment, providing distinct visibility for **Platform Infrastructure** (e.g., CNI, CSI, Ingress) and **Customer Workloads**. This ensures that platform SREs and customer support teams receive relevant, routed alerts without noise contamination.
+The system evolves beyond simple k8s event logging into a **state-driven observability platform**. It ingests signals from various sources (Kubernetes events being a primary one) into a unified broker, processes them via azure stream analytics to update a real-time state store (Cosmos DB), and drives downstream automated repair and alerting services based on resource state transitions.
 
-## 2. Design Rationale: Custom Pipeline vs. Native Log Analytics
+## 2. Design Rationale
 
-While Azure Kubernetes Service (AKS) offers native integration with Azure Log Analytics (ContainerLog/KubeEvents tables), this custom event-based architecture is required to address specific limitations in the native solution for **real-time, fleet-wide anomaly detection**:
+### 2.1 Event Hub as Universal Buffer
+We utilize an event broker (e.g., Azure Event Hubs) not just as a pipe, but as a critical **load-leveling mechanism**. This allows us to ingest high-volume, bursty traffic from thousands of clusters and other sources without overwhelming downstream databases or compute engines. It serves as the unified entry point for all fleet signals.
 
-*   **Ingestion Latency**: Log Analytics is primarily a store-and-query system. Ingestion latency typically ranges from 2 to 10 minutes. This delay is unacceptable for time-critical anomaly detection (e.g., detecting a cascading upgrade failure immediately). Our streaming pipeline targets **sub-second** latency.
-*   **Cost Efficiency**: Log Analytics charges by data ingestion and retention. Streaming millions of raw `KubeEvents` into Log Analytics is prohibitively expensive at fleet scale. By filtering at the edge and processing in-stream, we only persist high-value anomalies, drastically reducing storage costs.
-*   **Complex Event Processing (CEP)**: Log Analytics (KQL) relies on polling for alerts. A streaming engine (like Flink/ASA) allows for stateful, windowed computations (e.g., "Alert if >3 failed mounts in 1 minute") that are difficult or resource-intensive to implement via periodic KQL queries.
-*   **Open Integration**: A Kafka-based backbone decoupling allows any downstream consumer (OpsGenie, Custom Auto-Remediation, Data Lake) to "plug in" to the real-time feed without relying on proprietary Azure Monitor connectors or polling APIs.
+### 2.2 Holistic State View (Cosmos DB)
+Instead of reacting to individual transient events, we aim to maintain a **persistent state** for every resource. By using an "Upsert" pattern effectively, we transform a stream of events into a live table of "Current Resource Health". This allows us to query *state* (e.g., "Give me all clusters in 'Degraded' state") rather than parsing logs.
+
+### 2.3 Decoupled Remediation
+The analysis logic is separated from the action logic.
+*   **Analysis (ASA)**: Responsible for normalizing data and determining *what is happening* (updating state).
+*   **Action (Repair Service)**: Responsible for determining *what to do about it* (executing repairs based on state transitions).
 
 ## 3. System Architecture
 
-The data pipeline consists of four main stages: **Collection**, **Ingestion**, **Processing**, and **Distribution**.
+The pipeline follows a **Source -> Buffer -> State -> Action** flow.
 
-### 2.1 High-Level Data Flow
-1.  **Edge**: `eventrouter` runs on each K8s cluster, watching the API Server for events.
-2.  **Ingestion**: Events are forwarded asynchronously to a central **Kafka** (or Azure Event Hubs) cluster.
-3.  **Processing**: A **Stream Analytics** job consumes the raw stream, applying windowing logic to detect anomalies (e.g., CrashLoopBackOff spikes, node instability).
-4.  **Distribution**: Detected anomalies are published to a **Service Bus** topic.
-5.  **Consumption**: Downstream subscribers (Alerting, Dashboards, Auto-remediation) consume messages relevant to them.
+### 3.1 High-Level Data Flow
+1.  **Sources**: Resources (Subscriptions, K8s Clusters, Namespace Instances, etc.) emit events. `eventrouter` captures K8s events.
+2.  **Ingestion & Buffer**: Events are pushed to **Event Hubs** partitions.
+3.  **Pre-Processing (ETL)**: **Azure Stream Analytics (ASA)** consumes the raw stream, filters noise, transforms formats, and prepares data for storage.
+4.  **State Persistence**: ASA outputs to **Cosmos DB** using an **Upsert** policy. This creates/updates the "Holistic View" of each resource.
+5.  **Downstream Action**:
+    *   **Repair Service**: Polls/Change-Feeds from Cosmos DB to detect unhealthy resources and execute mitigation logic via a State Machine.
+    *   **Alerting Service**: Monitors for resources that fail repair or enter critical states and pages humans.
 
 ## 4. Component Detail
 
-### 4.1 Edge Collection (Source)
-*   **Component**: `eventrouter` (deployed as a Deployment/DaemonSet).
-*   **Responsibility**: Watch `v1.Event` resources. Transform to JSON.
-*   **Edge Filtering Strategy**:
-    *   **Objective**: Eliminate noise at the source to prevent "DDOS by Logging" and reduce costs.
-    *   **Mechanism**: A configurable filter engine running inside `eventrouter`.
-    *   **Default Policy**: **DROP** all events where `Type == 'Normal'`.
-    *   **Overrides**: Allow-list specific `Normal` events (e.g., `NodeReady`) that are required for reachability analysis.
-*   **Transport**: Producer API to push directly to Ingestion endpoint.
-*   **Auth**: Mutual TLS (mTLS) or SAS tokens per cluster.
+### 4.1 Sources & Edge Collection
+*   **Kubernetes Clusters**: Uses `eventrouter` to watch `v1.Event`.
+*   **Other Sources**: Pipeline is extensible to accept signals from VMs, network devices, or external monitoring agents.
+*   **Protocol**: All sources send standardized JSON envelopes to the Ingestion Layer.
 
-### 4.2 Ingestion Layer (Stream Buffer)
-*   **Technology**: Apache Kafka / Azure Event Hubs.
-*   **Capacity Planning**: High throughput, persistent retention (e.g., 7 days).
-*   **Partitioning Key**: `ClusterID`. This ensures all events from a specific cluster land in the same partition, preserving order for stateful analysis.
+### 4.2 Ingestion Layer (Load Leveling)
+*   **Component**: Azure Event Hubs / Kafka.
+*   **Role**: 
+    1.  **Buffer**: Absorb spikes from "Event Storms" (e.g., region-wide outages).
+    2.  **Decoupling**: Sources don't need to know about the database schema or processing logic.
+*   **Partitioning**: Keyed by `ResourceID` to ensure ordering for specific resources.
 
-### 4.3 Stream Processing (Analysis)
-*   **Technology**: Apache Flink / Azure Stream Analytics / KSQL.
+### 4.3 Stream Processing (ASA)
+*   **Component**: Azure Stream Analytics.
 *   **Logic**:
-    *   **Filtering**: Ignore `Normal` events, focus on `Warning`.
-    *   **Enrichment/Classification**: Tag events based on Namespace/Labels to distinguish **Platform** (e.g., `kube-system`, `gatekeeper-system`) vs. **Customer** (e.g., `tenant-*`, `user-*`) workloads.
-    *   **Windowing (Aggregation)**: 
-        *   Kubernetes treats ongoing issues as `UPDATES` to a single event (incrementing `count`). 
-        *   The Stream Job collapses these continuous updates into **Tumbling Windows** (e.g., 5 minutes). 
-        *   *Result*: Instead of 500 "New Event" triggers, we emit **one** summary event per window saying "Pod X crashed 50 times in the last 5 minutes".
-    *   **Fingerprinting**: 
-        *   Generates a deterministic **Alert ID** (Hash of `ClusterID` + `Namespace` + `Object` + `Reason`).
-        *   This ID remains constant as long as the same issue persists.
-*   **Output**: JSON payload describing the anomaly (ClusterID, Severity, Timestamp, Category, AlertID, WindowCount).
+    *   **Extraction**: Pull relevant fields (ClusterID, Component, Reason, Message) from user-defined payload.
+    *   **Pre-Processing**: Calculate derived fields (e.g., `IsCritical = true` if `Reason == 'CrashLoopBackOff'`).
+    *   **Output**: Writes to Cosmos DB.
+*   **Sinking Policy**: **Upsert**.
+    *   Key: `ResourceID` (e.g., `/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.ContainerService/managedClusters/c1`).
+    *   Behavior: If the record exists, update the status and timestamp; if not, insert it.
 
-### 4.4 Distribution & Consumption
-*   **Technology**: Enterprise Service Bus (e.g., RabbitMQ, Azure Service Bus).
-*   **Pattern**: Publish/Subscribe (Pub/Sub) with Topic filters.
-*   **Routing Strategy**:
-    *   **Topic**: `telemetry.anomalies`
-    *   **Subscription Filters**: Consumers filter based on the `Category` field enriched during processing.
-*   **Deduplication Strategy**:
-    *   Consumers utilize the **Alert ID** (generated in 4.3) to manage state.
-    *   **First Occurrence**: Open new Ticket / Alert.
-    *   **Subsequent Occurrences (Same Alert ID)**: Update existing Ticket count / Reset "Auto-resolve" timer. **Do not page**.
-*   **Subscribers**:
-    *   **Platform SRE**: Subscribes to `Category == 'Platform'`. Triggers PagerDuty using `Alert ID` as the deduplication key.
-    *   **Customer Support**: Subscribes to `Category == 'Customer'`. Feeds into CRM/Ticketing systems to proactively notify customers of their application misconfigurations.
-    *   **Data Lake Sink**: Archives ALL anomalies for comprehensive historical analysis.
-    *   **Enrichment Service**: Decorates events with cluster metadata (Owner, Region) before forwarding to dashboards.
+### 4.4 Global State Store (The "Holistic View")
+*   **Component**: Azure Cosmos DB (NoSQL API).
+*   **Data Model**: document per resource.
+    ```json
+    {
+      "id": "<ResourceID>",
+      "type": "Microsoft.ContainerService/managedClusters",
+      "healthState": "Unhealthy",
+      "lastEventTimestamp": "2026-01-08T10:00:00Z",
+      "activeSignals": [
+        { "code": "K8sEvent", "reason": "EtcdDown", "count": 5 }
+      ],
+      "mitigationStatus": {
+        "attemptCount": 0,
+        "lastAction": null
+      }
+    }
+    ```
 
-## 5. Scalability & Reliability
-*   **Edge Reduction**: Filtering `Normal` events at the edge is the primary scalability lever, expected to reduce volume by ~90%.
-*   **Throttling**: The Edge agent (`eventrouter`) must implement rate limiting to prevent DDOSing the ingestion layer during cluster-wide failures.
-*   **Backpressure**: The Ingestion layer acts as a buffer. Stream processors must scale horizontally based on lag.
-*   **Idempotency**: Downstream consumers must handle duplicate deliveries (At-least-once delivery guarantee).
+### 4.5 Repair Service & State Machine
+*   **Role**: The "Brain" of the operation.
+*   **Mechanism**: Monitors Cosmos DB (via Change Feed or Polling).
+*   **State Machine Transitions**:
+    *   `Healthy`: No active adverse signals.
+    *   `Unhealthy`: Bad signals detected. Trigger **Mitigation A** (e.g., Restart Node).
+    *   `MitigationInProgress`: Wait for signals to clear.
+    *   `Probation`: Mitigation failed or issue recurred. Trigger **Mitigation B** (e.g., Redeploy Control Plane).
+    *   `Prohibited/Terminal`: Manual intervention required.
+*   **Logic**:
+    *   If `HealthState` moves from `Healthy` -> `Unhealthy`, schedule Repair Job.
+    *   If repair succeeds, state returns to `Healthy`.
+    *   If repair fails max retries, transition to `Terminal` and emit Alert.
 
-## 6. Security
-*   **Encryption**: TLS 1.2+ in transit. Encryption at Rest in Kafka/Service Bus.
-*   **Isolation**: Ingestion layer filters invalid/unauthorized Cluster IDs.
+### 4.6 Alerting & Reporting
+*   **Consumers**:
+    *   **PagerDuty**: Triggered only when the State Machine reaches `Terminal` or critical `Unhealthy` states that cannot be auto-repaired.
+    *   **Dashboards**: Visualize the count of clusters in each state (e.g., "98% Healthy, 1% Mitigating, 1% Terminal").
 
-## 7. Open Questions
-*   Specific definition of "Anomaly" (needs tuning).
-*   Retention policy for raw events vs. anomalies.
+## 5. Security & Reliability
+*   **Identity**: Managed Identities for ASA -> Event Hub and ASA -> Cosmos DB.
+*   **Resiliency**: 
+    *   Event Hub captures data even if ASA is down.
+    *   Cosmos DB provides HA and Geo-Replication for the state view.
