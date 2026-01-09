@@ -1,4 +1,5 @@
 SELECT
+    CONCAT(GetMetadataPropertyValue([aks-events], '[User].[cosmic_cluster_id]'), '.', [event].[metadata].[name]) AS id,
     *
 INTO [cosmic-events-aks-db-plat]
 FROM [aks-events]
