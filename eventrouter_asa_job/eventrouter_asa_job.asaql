@@ -2,4 +2,4 @@ SELECT
     *
 INTO [cosmic-events-aks-db-plat]
 FROM [aks-events]
-WHERE type = 'Warning'
+WHERE [event].[type] = 'Warning'
