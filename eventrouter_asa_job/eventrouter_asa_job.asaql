@@ -3,4 +3,4 @@ SELECT
     *
 INTO [cosmic-events-aks-db-plat]
 FROM [aks-events]
-WHERE [event].[type] = 'Warning'
+WHERE [event].[type] = 'Warning' AND [event].[reason] != 'DeletionObserved'
