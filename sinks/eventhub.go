@@ -127,7 +127,8 @@ func (h *EventHubSink) drainEvents(events []EventData) {
 
 	for i := 0; i < len(events); i++ {
 		eJSONBytes, err := json.Marshal(map[string]interface{}{
-			"event": events[i].Event,
+			"event":             events[i].Event,
+			"cosmic_cluster_id": cosmicClusterId,
 		})
 		if err != nil {
 			glog.Warningf("Failed to flatten json: %v", err)
