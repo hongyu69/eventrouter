@@ -35,7 +35,7 @@ func NewEventData(eNew *v1.Event, eOld *v1.Event) EventData {
 
 	eNewCopy := eNew.DeepCopy()
 	eNewCopy.Kind = "Event"
-	eNewCopy.APIVersion = "events.k8s.io/v1"
+	eNewCopy.APIVersion = "v1"
 	eNewCopy.ManagedFields = nil
 
 	if eOld == nil {
@@ -46,7 +46,7 @@ func NewEventData(eNew *v1.Event, eOld *v1.Event) EventData {
 	} else {
 		eOldCopy := eOld.DeepCopy()
 		eOldCopy.Kind = "Event"
-		eOldCopy.APIVersion = "events.k8s.io/v1"
+		eOldCopy.APIVersion = "v1"
 		eOldCopy.ManagedFields = nil
 
 		eData = EventData{
