@@ -71,6 +71,9 @@ func NewEventHubSink(eventHubNamespace string, eventHubName string, overflow boo
 // Messages that are buffered beyond the bufferSize specified for this EventHubSink
 // are discarded.
 func (h *EventHubSink) UpdateEvents(eNew *v1.Event, eOld *v1.Event) {
+	if eNew.Type != v1.EventTypeWarning {
+		return
+	}
 	h.eventCh.In() <- NewEventData(eNew, eOld)
 }
 
