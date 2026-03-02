@@ -12,6 +12,7 @@ import (
 	"github.com/eapache/channels"
 	"github.com/golang/glog"
 	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // EventHubSink sends events to an Azure Event Hub.
@@ -126,8 +127,15 @@ func (h *EventHubSink) drainEvents(events []EventData) {
 	}
 
 	for i := 0; i < len(events); i++ {
+		event := *events[i].Event
+		if event.FirstTimestamp.IsZero() {
+			event.FirstTimestamp = metav1.Time{Time: event.EventTime.Time}
+		}
+		if event.LastTimestamp.IsZero() {
+			event.LastTimestamp = metav1.Time{Time: event.EventTime.Time}
+		}
 		eJSONBytes, err := json.Marshal(map[string]interface{}{
-			"event":             events[i].Event,
+			"event":             &event,
 			"cosmic_cluster_id": cosmicClusterId,
 		})
 		if err != nil {
