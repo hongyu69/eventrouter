@@ -47,7 +47,7 @@ kind: ClusterRole
 metadata:
   name: eventrouter 
 rules:
-- apiGroups: [""]
+- apiGroups: ["events.k8s.io"]
   resources: ["events"]
   verbs: ["get", "watch", "list"]
 ---
