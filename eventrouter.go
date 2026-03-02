@@ -25,11 +25,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/viper"
 
-	eventsv1 "k8s.io/api/events/v1"
+	v1 "k8s.io/api/core/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	eventsinformers "k8s.io/client-go/informers/events/v1"
+	coreinformers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
-	eventslisters "k8s.io/client-go/listers/events/v1"
+	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 )
 
@@ -83,7 +83,7 @@ type EventRouter struct {
 	kubeClient *kubernetes.Clientset
 
 	// store of events populated by the shared informer
-	eLister eventslisters.EventLister
+	eLister corelisters.EventLister
 
 	// returns true if the event store has been synced
 	eListerSynched cache.InformerSynced
@@ -97,7 +97,7 @@ type EventRouter struct {
 }
 
 // NewEventRouter will create a new event router using the input params
-func NewEventRouter(kubeClient *kubernetes.Clientset, eventsInformer eventsinformers.EventInformer) *EventRouter {
+func NewEventRouter(kubeClient *kubernetes.Clientset, eventsInformer coreinformers.EventInformer) *EventRouter {
 	if viper.GetBool("enable-prometheus") {
 		prometheus.MustRegister(kubernetesWarningEventCounterVec)
 		prometheus.MustRegister(kubernetesNormalEventCounterVec)
@@ -137,61 +137,53 @@ func (er *EventRouter) Run(stopCh <-chan struct{}) {
 
 // addEvent is called when an event is created, or during the initial list
 func (er *EventRouter) addEvent(obj interface{}) {
-	e := obj.(*eventsv1.Event)
+	e := obj.(*v1.Event)
 	if er.eventLastSeenAfterStart(e) {
 		prometheusEvent(e)
 		er.eSink.UpdateEvents(e, nil)
 	} else {
-		glog.V(3).Infof("Skipping pre-start event %s/%s last seen at %s (router start %s)", e.Namespace, e.Name, eventLastObservedTime(e), er.startTime)
+		glog.V(3).Infof("Skipping pre-start event %s/%s last seen at %s (router start %s)", e.Namespace, e.Name, e.LastTimestamp.Time, er.startTime)
 	}
 }
 
 // updateEvent is called any time there is an update to an existing event
 func (er *EventRouter) updateEvent(objOld interface{}, objNew interface{}) {
-	eOld := objOld.(*eventsv1.Event)
-	eNew := objNew.(*eventsv1.Event)
+	eOld := objOld.(*v1.Event)
+	eNew := objNew.(*v1.Event)
 	if er.eventLastSeenAfterStart(eNew) {
 		prometheusEvent(eNew)
 		er.eSink.UpdateEvents(eNew, eOld)
 	} else {
-		glog.V(3).Infof("Skipping update for pre-start event %s/%s last seen at %s (router start %s)", eNew.Namespace, eNew.Name, eventLastObservedTime(eNew), er.startTime)
+		glog.V(3).Infof("Skipping update for pre-start event %s/%s last seen at %s (router start %s)", eNew.Namespace, eNew.Name, eNew.LastTimestamp.Time, er.startTime)
 	}
-}
-
-// eventLastObservedTime returns the most recent observation time from the event.
-// For series events, Series.LastObservedTime is used. Otherwise EventTime is preferred,
-// falling back to deprecated fields.
-func eventLastObservedTime(e *eventsv1.Event) time.Time {
-	if e.Series != nil && !e.Series.LastObservedTime.IsZero() {
-		return e.Series.LastObservedTime.Time
-	}
-	if !e.EventTime.IsZero() {
-		return e.EventTime.Time
-	}
-	if !e.DeprecatedLastTimestamp.IsZero() {
-		return e.DeprecatedLastTimestamp.Time
-	}
-	if !e.DeprecatedFirstTimestamp.IsZero() {
-		return e.DeprecatedFirstTimestamp.Time
-	}
-	return e.CreationTimestamp.Time
 }
 
 // eventLastSeenAfterStart determines if an event should be published by
 // checking its occurrence time against the router start time.
-// Preference order: Series.LastObservedTime, EventTime, DeprecatedLastTimestamp,
-// DeprecatedFirstTimestamp, CreationTimestamp.
+// Preference order: LastTimestamp, EventTime, FirstTimestamp, CreationTimestamp.
 // If none are available, the event is dropped.
-func (er *EventRouter) eventLastSeenAfterStart(e *eventsv1.Event) bool {
-	t := eventLastObservedTime(e)
-	if t.IsZero() {
-		return false
+func (er *EventRouter) eventLastSeenAfterStart(e *v1.Event) bool {
+	if !e.LastTimestamp.IsZero() {
+		t := e.LastTimestamp.Time
+		return !t.UTC().Before(er.startTime)
 	}
-	return !t.UTC().Before(er.startTime)
+	if !e.EventTime.IsZero() {
+		t := e.EventTime.Time
+		return !t.UTC().Before(er.startTime)
+	}
+	if !e.FirstTimestamp.IsZero() {
+		t := e.FirstTimestamp.Time
+		return !t.UTC().Before(er.startTime)
+	}
+	if !e.CreationTimestamp.IsZero() {
+		t := e.CreationTimestamp.Time
+		return !t.UTC().Before(er.startTime)
+	}
+	return false
 }
 
 // prometheusEvent is called when an event is added or updated
-func prometheusEvent(event *eventsv1.Event) {
+func prometheusEvent(event *v1.Event) {
 	if !viper.GetBool("enable-prometheus") {
 		return
 	}
@@ -201,35 +193,35 @@ func prometheusEvent(event *eventsv1.Event) {
 	switch event.Type {
 	case "Normal":
 		counter, err = kubernetesNormalEventCounterVec.GetMetricWithLabelValues(
-			event.Regarding.Kind,
-			event.Regarding.Name,
-			event.Regarding.Namespace,
+			event.InvolvedObject.Kind,
+			event.InvolvedObject.Name,
+			event.InvolvedObject.Namespace,
 			event.Reason,
-			event.ReportingInstance,
+			event.Source.Host,
 		)
 	case "Warning":
 		counter, err = kubernetesWarningEventCounterVec.GetMetricWithLabelValues(
-			event.Regarding.Kind,
-			event.Regarding.Name,
-			event.Regarding.Namespace,
+			event.InvolvedObject.Kind,
+			event.InvolvedObject.Name,
+			event.InvolvedObject.Namespace,
 			event.Reason,
-			event.ReportingInstance,
+			event.Source.Host,
 		)
 	case "Info":
 		counter, err = kubernetesInfoEventCounterVec.GetMetricWithLabelValues(
-			event.Regarding.Kind,
-			event.Regarding.Name,
-			event.Regarding.Namespace,
+			event.InvolvedObject.Kind,
+			event.InvolvedObject.Name,
+			event.InvolvedObject.Namespace,
 			event.Reason,
-			event.ReportingInstance,
+			event.Source.Host,
 		)
 	default:
 		counter, err = kubernetesUnknownEventCounterVec.GetMetricWithLabelValues(
-			event.Regarding.Kind,
-			event.Regarding.Name,
-			event.Regarding.Namespace,
+			event.InvolvedObject.Kind,
+			event.InvolvedObject.Name,
+			event.InvolvedObject.Namespace,
 			event.Reason,
-			event.ReportingInstance,
+			event.Source.Host,
 		)
 	}
 
@@ -243,7 +235,7 @@ func prometheusEvent(event *eventsv1.Event) {
 
 // deleteEvent should only occur when the system garbage collects events via TTL expiration
 func (er *EventRouter) deleteEvent(obj interface{}) {
-	e := obj.(*eventsv1.Event)
+	e := obj.(*v1.Event)
 	// NOTE: This should *only* happen on TTL expiration there
 	// is no reason to push this to a sink
 	glog.V(5).Infof("Event Deleted from the system:\n%v", e)

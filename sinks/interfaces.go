@@ -21,12 +21,12 @@ import (
 
 	"github.com/golang/glog"
 	"github.com/spf13/viper"
-	eventsv1 "k8s.io/api/events/v1"
+	v1 "k8s.io/api/core/v1"
 )
 
 // EventSinkInterface is the interface used to shunt events
 type EventSinkInterface interface {
-	UpdateEvents(eNew *eventsv1.Event, eOld *eventsv1.Event)
+	UpdateEvents(eNew *v1.Event, eOld *v1.Event)
 }
 
 // ManufactureSink will manufacture a sink according to viper configs
