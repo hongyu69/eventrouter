@@ -11,7 +11,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azeventhubs/v2"
 	"github.com/eapache/channels"
 	"github.com/golang/glog"
-	v1 "k8s.io/api/core/v1"
+	eventsv1 "k8s.io/api/events/v1"
 )
 
 // EventHubSink sends events to an Azure Event Hub.
@@ -69,7 +69,7 @@ func NewEventHubSink(eventHubNamespace string, eventHubName string, overflow boo
 // event data to the event OverflowingChannel, which should never block.
 // Messages that are buffered beyond the bufferSize specified for this EventHubSink
 // are discarded.
-func (h *EventHubSink) UpdateEvents(eNew *v1.Event, eOld *v1.Event) {
+func (h *EventHubSink) UpdateEvents(eNew *eventsv1.Event, eOld *eventsv1.Event) {
 	h.eventCh.In() <- NewEventData(eNew, eOld)
 }
 

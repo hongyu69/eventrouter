@@ -107,7 +107,7 @@ func main() {
 
 	clientset := loadConfig()
 	sharedInformers := informers.NewSharedInformerFactory(clientset, viper.GetDuration("resync-interval"))
-	eventsInformer := sharedInformers.Core().V1().Events()
+	eventsInformer := sharedInformers.Events().V1().Events()
 
 	// TODO: Support locking for HA https://github.com/kubernetes/kubernetes/pull/42666
 	eventRouter := NewEventRouter(clientset, eventsInformer)
