@@ -128,11 +128,17 @@ func (h *EventHubSink) drainEvents(events []EventData) {
 
 	for i := 0; i < len(events); i++ {
 		event := *events[i].Event
+		if event.EventTime.IsZero() {
+			event.EventTime = metav1.MicroTime{Time: event.FirstTimestamp.Time}
+		}
 		if event.FirstTimestamp.IsZero() {
 			event.FirstTimestamp = metav1.Time{Time: event.EventTime.Time}
 		}
 		if event.LastTimestamp.IsZero() {
 			event.LastTimestamp = metav1.Time{Time: event.EventTime.Time}
+		}
+		if event.Count == 0 {
+			event.Count = 1
 		}
 		eJSONBytes, err := json.Marshal(map[string]interface{}{
 			"event":             &event,
